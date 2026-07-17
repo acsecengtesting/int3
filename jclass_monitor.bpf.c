@@ -7,6 +7,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+#include <bpf/usdt.bpf.h>
 
 #define MAX_CLASS_NAME 128
 #define MAX_SOURCE_LEN 128
@@ -86,28 +87,38 @@ int BPF_KPROBE(uprobe_define_class_with_source,
 }
 
 // USDT probe: hotspot:class__loaded
-// Arguments: arg1=class_name(char*), arg2=name_len(int),
-//            arg3=classloader_ptr, arg4=shared(bool)
+// The USDT probe arguments from readelf:
+//   arg0: 8@%rdx  - class name pointer
+//   arg1: -4@%eax - class name length (signed 32-bit)  
+//   arg2: 8@152(%rdi) - classloader pointer
+//   arg3: 1@%cl   - shared flag
+// BPF_USDT args are all passed as (void*) by the macro
 SEC("usdt")
-int BPF_USDT(usdt_class_loaded, const char *class_name, int name_len,
-             void *classloader, char shared)
+int BPF_USDT(usdt_class_loaded, void *arg0, void *arg1, void *arg2, void *arg3)
 {
     struct class_load_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
         return 0;
 
+    void *class_name_ptr = arg0;
+    int name_len = (int)(long)arg1;
+    int shared_flag = (int)(long)arg3;
+
     e->pid = bpf_get_current_pid_tgid() >> 32;
     e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
     e->timestamp = bpf_ktime_get_ns();
     e->has_source = 0;
-    e->shared = shared;
+    e->shared = (__u8)shared_flag;
     e->name_len = name_len > MAX_CLASS_NAME ? MAX_CLASS_NAME : name_len;
 
     __builtin_memset(e->class_name, 0, MAX_CLASS_NAME);
     __builtin_memset(e->source, 0, MAX_SOURCE_LEN);
 
-    if (class_name && name_len > 0) {
-        bpf_probe_read_user_str(e->class_name, MAX_CLASS_NAME, class_name);
+    if (class_name_ptr && name_len > 0) {
+        // Use unsigned and mask to prove to verifier value is bounded
+        __u32 read_len = (__u32)name_len & (MAX_CLASS_NAME - 1);
+        bpf_probe_read_user(e->class_name, read_len + 1, class_name_ptr);
+        e->class_name[read_len] = '\0';
     }
 
     bpf_ringbuf_submit(e, 0);
