@@ -1,19 +1,19 @@
 #!/bin/bash
-# Test script: starts Java app, attaches classloader monitor, captures output
+# Test: start Java app loading from jars, capture class load events with source info
 set -e
 
 cd /root/jclass_monitor
-javac TestApp.java
+javac JarTest.java
 
 echo "Starting Java test app..."
-java TestApp &
+java JarTest &
 JPID=$!
 echo "Java PID: $JPID"
 
-sleep 2
+sleep 1
 
-echo "Attaching classloader monitor..."
-/root/jclass_monitor/jclass_monitor -v -p $JPID -n > /tmp/jclass_out.log 2>&1 &
+echo "Attaching classloader monitor (showing all events including source)..."
+/root/jclass_monitor/jclass_monitor -v -p $JPID > /tmp/jclass_out.log 2>&1 &
 BPID=$!
 
 # Wait for Java to finish

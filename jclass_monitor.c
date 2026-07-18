@@ -14,13 +14,18 @@
 #define MAX_CLASS_NAME 128
 #define MAX_SOURCE_LEN 128
 
+#define EVT_USDT_LOADED  1
+#define EVT_DEFINE_CLASS 2
+
 struct class_load_event {
     __u32 pid;
     __u32 tid;
     __u64 timestamp;
-    __u8  has_source;
+    __u8  event_type;
     __u8  shared;
     __u16 name_len;
+    __u32 bytecode_len;
+    __u32 bytecode_crc;
     char  class_name[MAX_CLASS_NAME];
     char  source[MAX_SOURCE_LEN];
 };
@@ -57,12 +62,13 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
             class_name[i] = '.';
     }
 
-    if (e->has_source && e->source[0]) {
-        printf("[%s] pid=%d tid=%d  %s%s  source=%s\n",
-               time_buf, e->pid, e->tid,
-               class_name,
-               e->shared ? " [shared]" : "",
-               e->source);
+    if (e->event_type == EVT_DEFINE_CLASS) {
+        printf("[%s] pid=%d tid=%d  %s  bytes=%u crc=0x%08x",
+               time_buf, e->pid, e->tid, class_name,
+               e->bytecode_len, e->bytecode_crc);
+        if (e->source[0])
+            printf("  source=%s", e->source);
+        printf("\n");
     } else {
         printf("[%s] pid=%d tid=%d  %s%s\n",
                time_buf, e->pid, e->tid,
