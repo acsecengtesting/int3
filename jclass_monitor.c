@@ -17,6 +17,7 @@
 #define EVT_USDT_LOADED  1
 #define EVT_DEFINE_CLASS 2
 #define EVT_LOAD_LIBRARY 3
+#define EVT_EXEC         4
 
 struct class_load_event {
     __u32 pid;
@@ -74,6 +75,12 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
         printf("[%s] pid=%d tid=%d  [NATIVE LIB] %s\n",
                time_buf, e->pid, e->tid,
                e->source[0] ? e->source : "(unknown)");
+    } else if (e->event_type == EVT_EXEC) {
+        printf("[%s] pid=%d tid=%d  [EXEC] %s",
+               time_buf, e->pid, e->tid, class_name);
+        if (e->source[0])
+            printf(" %s", e->source);
+        printf("  (ppid=%u)\n", e->bytecode_crc);
     } else {
         printf("[%s] pid=%d tid=%d  %s%s\n",
                time_buf, e->pid, e->tid,
@@ -102,6 +109,7 @@ int main(int argc, char **argv) {
     struct bpf_link *uprobe_link = NULL;
     struct bpf_link *usdt_link = NULL;
     struct bpf_link *lib_link = NULL;
+    struct bpf_link *exec_link = NULL;
     struct ring_buffer *rb = NULL;
     int err, opt;
     int target_pid = -1;
@@ -249,6 +257,28 @@ int main(int argc, char **argv) {
     if (uprobe_link) printf("  uprobe: JVM_DefineClassWithSource\n");
     if (lib_link) printf("  uprobe: JVM_LoadLibrary (native libs)\n");
     if (usdt_link) printf("  USDT:   hotspot:class__loaded\n");
+
+    // Attach tracepoint for execve and populate target PID map
+    struct bpf_program *exec_prog = bpf_object__find_program_by_name(obj, "tracepoint_execve");
+    if (exec_prog) {
+        exec_link = bpf_program__attach(exec_prog);
+        if (libbpf_get_error(exec_link)) {
+            fprintf(stderr, "WARNING: attaching tracepoint/syscalls/sys_enter_execve failed\n");
+            exec_link = NULL;
+        } else {
+            // Add target PID to the filter map
+            int pid_map_fd = bpf_object__find_map_fd_by_name(obj, "target_pids");
+            if (pid_map_fd >= 0) {
+                __u32 key = target_pid;
+                __u8 val = 1;
+                bpf_map_update_elem(pid_map_fd, &key, &val, 0);
+            }
+            if (verbose)
+                printf("Attached tracepoint sys_enter_execve (monitoring PID %d tree)\n", target_pid);
+        }
+    }
+
+    if (exec_link) printf("  tracepoint: sys_enter_execve\n");
     if (only_non_shared) printf("  Filter: showing only non-shared classes\n");
     printf("Press Ctrl+C to stop.\n\n");
 
@@ -284,6 +314,8 @@ cleanup:
         bpf_link__destroy(uprobe_link);
     if (lib_link)
         bpf_link__destroy(lib_link);
+    if (exec_link)
+        bpf_link__destroy(exec_link);
     if (usdt_link)
         bpf_link__destroy(usdt_link);
     if (obj)
