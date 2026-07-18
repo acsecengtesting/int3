@@ -15,6 +15,7 @@
 // Event types
 #define EVT_USDT_LOADED  1   // from USDT hotspot:class__loaded
 #define EVT_DEFINE_CLASS 2   // from uprobe JVM_DefineClassWithSource
+#define EVT_LOAD_LIBRARY 3   // from uprobe JVM_LoadLibrary (JNI native lib)
 
 // Event emitted for each class load
 struct class_load_event {
@@ -154,6 +155,39 @@ int BPF_USDT(usdt_class_loaded, void *arg0, void *arg1, void *arg2, void *arg3)
         __u32 read_len = (__u32)name_len & (MAX_CLASS_NAME - 1);
         bpf_probe_read_user(e->class_name, read_len + 1, class_name_ptr);
         e->class_name[read_len] = '\0';
+    }
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// Hook JVM_LoadLibrary to detect native library loads (JNI)
+// Signature: void* JVM_LoadLibrary(const char *name, jboolean throwException)
+// This fires when System.loadLibrary() or System.load() is called
+SEC("uprobe")
+int BPF_KPROBE(uprobe_load_library, const char *lib_name)
+{
+    struct class_load_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    e->timestamp = bpf_ktime_get_ns();
+    e->event_type = EVT_LOAD_LIBRARY;
+    e->shared = 0;
+    e->name_len = 0;
+    e->bytecode_len = 0;
+    e->bytecode_crc = 0;
+
+    __builtin_memset(e->class_name, 0, MAX_CLASS_NAME);
+    __builtin_memset(e->source, 0, MAX_SOURCE_LEN);
+
+    // Library path goes in source field
+    if (lib_name) {
+        bpf_probe_read_user_str(e->source, MAX_SOURCE_LEN, lib_name);
+        // Copy short name into class_name for display
+        bpf_probe_read_user_str(e->class_name, MAX_CLASS_NAME, lib_name);
     }
 
     bpf_ringbuf_submit(e, 0);

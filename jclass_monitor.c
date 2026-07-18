@@ -16,6 +16,7 @@
 
 #define EVT_USDT_LOADED  1
 #define EVT_DEFINE_CLASS 2
+#define EVT_LOAD_LIBRARY 3
 
 struct class_load_event {
     __u32 pid;
@@ -69,6 +70,10 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
         if (e->source[0])
             printf("  source=%s", e->source);
         printf("\n");
+    } else if (e->event_type == EVT_LOAD_LIBRARY) {
+        printf("[%s] pid=%d tid=%d  [NATIVE LIB] %s\n",
+               time_buf, e->pid, e->tid,
+               e->source[0] ? e->source : "(unknown)");
     } else {
         printf("[%s] pid=%d tid=%d  %s%s\n",
                time_buf, e->pid, e->tid,
@@ -222,8 +227,27 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
+    // Attach uprobe to JVM_LoadLibrary for native lib detection
+    struct bpf_program *lib_prog = bpf_object__find_program_by_name(obj, "uprobe_load_library");
+    struct bpf_link *lib_link = NULL;
+    if (lib_prog) {
+        LIBBPF_OPTS(bpf_uprobe_opts, lib_opts,
+            .func_name = "JVM_LoadLibrary",
+            .retprobe = false,
+        );
+        lib_link = bpf_program__attach_uprobe_opts(lib_prog, target_pid,
+                                                    libjvm_path, 0, &lib_opts);
+        if (libbpf_get_error(lib_link)) {
+            fprintf(stderr, "WARNING: attaching uprobe to JVM_LoadLibrary failed\n");
+            lib_link = NULL;
+        } else if (verbose) {
+            printf("Attached uprobe to JVM_LoadLibrary\n");
+        }
+    }
+
     printf("Java classloader monitor attached to PID %d\n", target_pid);
     if (uprobe_link) printf("  uprobe: JVM_DefineClassWithSource\n");
+    if (lib_link) printf("  uprobe: JVM_LoadLibrary (native libs)\n");
     if (usdt_link) printf("  USDT:   hotspot:class__loaded\n");
     if (only_non_shared) printf("  Filter: showing only non-shared classes\n");
     printf("Press Ctrl+C to stop.\n\n");
