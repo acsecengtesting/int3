@@ -1,0 +1,26 @@
+/* Trace all JVM class loading entry points to understand which paths are used */
+
+uprobe:/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so:JVM_DefineClass
+{
+    printf("DefineClass: name=%s\n", str(reg("si")));
+}
+
+uprobe:/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so:JVM_DefineClassWithSource
+{
+    printf("DefineClassWithSource: name=%s source=%s\n", str(reg("si")), str(reg("r9")));
+}
+
+uprobe:/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so:JVM_LookupDefineClass
+{
+    printf("LookupDefineClass: name=%s\n", str(reg("si")));
+}
+
+uprobe:/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so:JVM_FindClassFromBootLoader
+{
+    printf("FindFromBoot: name=%s\n", str(reg("si")));
+}
+
+uprobe:/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so:JVM_FindClassFromCaller
+{
+    printf("FindFromCaller: name=%s\n", str(reg("si")));
+}

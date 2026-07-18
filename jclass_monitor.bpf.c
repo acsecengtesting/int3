@@ -36,25 +36,21 @@ struct {
     __uint(max_entries, 512 * 1024);
 } events SEC(".maps");
 
-// Simple CRC-like hash of the first N bytes of bytecode
-// Not cryptographic, but useful for fingerprinting classes
+// Simple FNV-1a hash of the first 64 bytes of bytecode
 static __always_inline __u32 hash_bytes(const void *buf, __u32 len) {
     __u32 hash = 0x811c9dc5;  // FNV offset basis
-    __u8 bytes[64];
+    __u8 bytes[64] = {};
 
-    // Read up to 64 bytes from user memory
-    __u32 to_read = len;
-    if (to_read > 64)
-        to_read = 64;
+    // Always read exactly 64 bytes (padding with zeros if shorter)
+    __u32 to_read = len < 64 ? len : 64;
     to_read &= 63;  // verifier-friendly bound
 
-    if (bpf_probe_read_user(bytes, to_read, buf) != 0)
+    if (bpf_probe_read_user(bytes, sizeof(bytes), buf) != 0)
         return 0;
 
+    // Hash all 64 bytes (zeros beyond actual data are fine for fingerprinting)
     #pragma unroll
     for (int i = 0; i < 64; i++) {
-        if (i >= to_read)
-            break;
         hash ^= bytes[i];
         hash *= 0x01000193;  // FNV prime
     }

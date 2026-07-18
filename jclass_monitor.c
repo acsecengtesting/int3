@@ -101,6 +101,7 @@ int main(int argc, char **argv) {
     struct bpf_program *uprobe_prog = NULL;
     struct bpf_link *uprobe_link = NULL;
     struct bpf_link *usdt_link = NULL;
+    struct bpf_link *lib_link = NULL;
     struct ring_buffer *rb = NULL;
     int err, opt;
     int target_pid = -1;
@@ -229,7 +230,6 @@ int main(int argc, char **argv) {
 
     // Attach uprobe to JVM_LoadLibrary for native lib detection
     struct bpf_program *lib_prog = bpf_object__find_program_by_name(obj, "uprobe_load_library");
-    struct bpf_link *lib_link = NULL;
     if (lib_prog) {
         LIBBPF_OPTS(bpf_uprobe_opts, lib_opts,
             .func_name = "JVM_LoadLibrary",
@@ -282,6 +282,8 @@ cleanup:
         ring_buffer__free(rb);
     if (uprobe_link)
         bpf_link__destroy(uprobe_link);
+    if (lib_link)
+        bpf_link__destroy(lib_link);
     if (usdt_link)
         bpf_link__destroy(usdt_link);
     if (obj)
