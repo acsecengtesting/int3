@@ -1,0 +1,9 @@
+{
+  "region": "us-east",
+  "type": "g6-standard-1",
+  "image": "linode/ubuntu24.04",
+  "root_pass": "T3mp!Pwd#2024xZ",
+  "authorized_keys": ["ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDDZxwrO6echh5lRo27EXHy0KBuonvMmA0r3Nl3/1twE71iwM//CrZIfkMov0XTW8HxbgEhy0e1cS+6B3QozhNP1/3+slAwnjlBigbjM+kvfDw2NP0IyjWMJyEKAhubhEek0RvDagY5ljr6dgMsJtVLB5wfTlao+eQPkf1tXsF2YZSdpyKIrEp9kLYgqk6mm9fbn8oE0zDXoiwV+6/UU61ANtQvoJDUvK0xFkvNG9ChEl9A3vJseFHBp7LvkSdaMT8fxSLs53DA4TlW7E6OpVVoPrUsit9jfxD8FVjvqu+eRwOW6SpdG7p5O3VrQjH8bi7ALm3s5MWhYDXTkDwPEejB andy@WINDOWS-H2QB161"],
+  "label": "ebpf-java-docker-2",
+  "booted": true
+}
