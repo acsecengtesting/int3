@@ -2,56 +2,52 @@
 set -e
 cd /root/jclass_monitor
 
-# Use JDK image (has javac)
+echo "=== Building overlay detector ==="
+if [ ! -f vmlinux.h ]; then
+    bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+fi
+clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu \
+    -c ovl_detect.bpf.c -o ovl_detect.bpf.o 2>&1
+gcc -O2 -g -Wall -o ovl_detect ovl_detect.c -lbpf -lelf -lz 2>&1
+
+echo ""
+echo "=== Setting up test container ==="
 docker rm -f testjava 2>/dev/null || true
 docker run -d --name testjava eclipse-temurin:21-jdk-noble sleep 3600
 sleep 2
 
-# Write test into the container
-docker exec testjava sh -c 'cat > /tmp/JniLoadTest.java << "JAVA"
-public class JniLoadTest {
-    public static void main(String[] args) throws Exception {
-        System.out.println("PID: " + ProcessHandle.current().pid());
-        
-        // Copy a real .so to the writable layer (simulating attacker dropping a lib)
-        Runtime.getRuntime().exec(new String[]{"cp", "/opt/java/openjdk/lib/libverify.so", "/tmp/libmalicious.so"}).waitFor();
-        Thread.sleep(1000);
-        
-        System.out.println("Attempting to load /tmp/libmalicious.so via System.load()...");
-        try {
-            System.load("/tmp/libmalicious.so");
-            System.out.println("Loaded successfully!");
-        } catch (UnsatisfiedLinkError e) {
-            System.out.println("Load attempted: " + e.getMessage());
-        }
-        
-        // Also load a legit library from the image layer for comparison
-        System.out.println("Loading legit library from image layer...");
-        try {
-            System.loadLibrary("zip");
-            System.out.println("libzip loaded from image layer");
-        } catch (UnsatisfiedLinkError e) {
-            System.out.println("zip: " + e.getMessage());
-        }
-        
-        Thread.sleep(1000);
-        System.out.println("Done.");
-    }
-}
-JAVA
-'
-
-docker exec testjava javac /tmp/JniLoadTest.java -d /tmp/
-
-echo "=== Starting overlay detector ==="
+echo "=== Starting detector ==="
 ./ovl_detect > /tmp/ovl_out.log 2>&1 &
 DPID=$!
 sleep 2
 
-echo "=== Running Java JNI load test inside container ==="
-docker exec testjava java -cp /tmp JniLoadTest
+echo "=== Test 1: .so from writable layer ==="
+docker exec testjava sh -c "cp /opt/java/openjdk/lib/libverify.so /tmp/evil.so"
+docker exec testjava sh -c "cat /tmp/evil.so > /dev/null"
 
-sleep 2
+echo "=== Test 2: .class from writable layer ==="
+docker exec testjava sh -c "echo 'cafebabe' > /tmp/Evil.class"
+docker exec testjava sh -c "cat /tmp/Evil.class > /dev/null"
+
+echo "=== Test 3: .jar from writable layer ==="
+docker exec testjava sh -c "cp /opt/java/openjdk/lib/jrt-fs.jar /tmp/evil.jar"
+docker exec testjava sh -c "cat /tmp/evil.jar > /dev/null"
+
+echo "=== Test 4: .so from image layer (should NOT alert) ==="
+docker exec testjava sh -c "cat /opt/java/openjdk/lib/libjava.so > /dev/null"
+
+echo "=== Test 5: .class loaded by Java from writable layer ==="
+docker exec testjava sh -c 'cat > /tmp/Pwned.java << "JAVA"
+public class Pwned {
+    public static void main(String[] args) {
+        System.out.println("You have been pwned!");
+    }
+}
+JAVA
+javac /tmp/Pwned.java -d /tmp/'
+docker exec testjava java -cp /tmp Pwned
+
+sleep 3
 kill $DPID 2>/dev/null || true
 wait $DPID 2>/dev/null || true
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-// Userspace loader for overlay writable-layer .so detection
+// Userspace loader for overlay writable-layer file detection
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,12 +14,16 @@
 #define MAX_FILENAME 128
 #define MAX_PATH_COMPONENT 64
 
+#define FILE_TYPE_SO    1
+#define FILE_TYPE_CLASS 2
+#define FILE_TYPE_JAR   3
+
 struct ovl_alert_event {
     __u32 pid;
     __u32 tid;
     __u64 timestamp;
     __u64 mnt_ns_inum;
-    __u8  is_upper;
+    __u8  file_type;
     char  filename[MAX_FILENAME];
     char  parent_dir[MAX_PATH_COMPONENT];
     char  comm[16];
@@ -38,6 +42,15 @@ static __u64 get_host_mnt_ns(void) {
     return 0;
 }
 
+static const char *file_type_str(__u8 ft) {
+    switch (ft) {
+        case FILE_TYPE_SO: return ".so";
+        case FILE_TYPE_CLASS: return ".class";
+        case FILE_TYPE_JAR: return ".jar";
+        default: return "unknown";
+    }
+}
+
 static int handle_event(void *ctx, void *data, size_t data_sz) {
     struct ovl_alert_event *e = data;
 
@@ -47,10 +60,11 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
     struct tm *tm = localtime(&ts.tv_sec);
     strftime(time_buf, sizeof(time_buf), "%H:%M:%S", tm);
 
-    printf("[%s] ALERT: .so from WRITABLE layer in container!\n", time_buf);
-    printf("       pid=%d comm=%s mnt_ns=%lu\n", e->pid, e->comm, e->mnt_ns_inum);
-    printf("       file=%s/%s\n", e->parent_dir, e->filename);
-    printf("\n");
+    printf("[%s] ALERT: %s from WRITABLE layer in container\n",
+           time_buf, file_type_str(e->file_type));
+    printf("       pid=%d comm=%s mnt_ns=%llu\n",
+           e->pid, e->comm, (unsigned long long)e->mnt_ns_inum);
+    printf("       file=%s/%s\n\n", e->parent_dir, e->filename);
     fflush(stdout);
     return 0;
 }
@@ -65,15 +79,13 @@ int main(int argc, char **argv) {
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
 
-    // Get host mount namespace
     __u64 host_ns = get_host_mnt_ns();
     if (!host_ns) {
         fprintf(stderr, "ERROR: could not read host mount namespace\n");
         return 1;
     }
-    printf("Host mount namespace: %lu\n", host_ns);
+    printf("Host mount namespace: %llu\n", (unsigned long long)host_ns);
 
-    // Open and load BPF object
     obj = bpf_object__open_file("ovl_detect.bpf.o", NULL);
     if (libbpf_get_error(obj)) {
         fprintf(stderr, "ERROR: opening BPF object failed\n");
@@ -86,7 +98,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    // Set the host mount namespace in the map
+    // Set host mount namespace in map
     int ns_map_fd = bpf_object__find_map_fd_by_name(obj, "host_mnt_ns");
     if (ns_map_fd >= 0) {
         __u32 key = 0;
@@ -103,17 +115,16 @@ int main(int argc, char **argv) {
 
     link = bpf_program__attach(prog);
     if (libbpf_get_error(link)) {
-        fprintf(stderr, "ERROR: attaching kprobe to ovl_open failed\n");
+        fprintf(stderr, "ERROR: attaching kprobe:ovl_open failed\n");
         link = NULL;
         err = 1;
         goto cleanup;
     }
 
-    printf("Overlay writable-layer .so detector attached.\n");
-    printf("Monitoring for native libraries loaded from container writable layers...\n");
+    printf("Container writable-layer detector attached (kprobe:ovl_open)\n");
+    printf("Monitoring .so / .class / .jar from writable overlay layers...\n");
     printf("Press Ctrl+C to stop.\n\n");
 
-    // Set up ring buffer
     int map_fd = bpf_object__find_map_fd_by_name(obj, "ovl_events");
     if (map_fd < 0) {
         fprintf(stderr, "ERROR: finding events map failed\n");
